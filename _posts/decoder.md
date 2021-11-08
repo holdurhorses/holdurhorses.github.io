@@ -1,0 +1,204 @@
+# kaldi解码器基本原理、设计思想与代码简析
+
+​	本文介绍kaldi中faster-decoder和lattice-decoder原理与实现 ，两种解码器原理基本一致，lattice-decoder相比faster-decoder在token-passing时建立了一个额外的前向链接，可以方便的记录state-level的拓扑结构。因此后续章节以faster-decoder为例介绍解码器的基本原理，以lattice-decoder为例进行代码剖析。
+
+# 1 基本功能与产物
+
+​	Decoder基本功能是给定声学特征序列的声学模型得分，如何在基于WFST构建的HCLG网络中寻找one-best(最优路径)，即`faster-decoder`实现的最终产物。但很多时候需要保留更多的解码路径以便后续算法处理，这时候解码结果一般是一个lattice(网格) ，lattice是fst或者fsa及其变体，即`lattice-faster-decoder`实现的最终产物，后文统一简称lattice-decoder。
+
+## 1.1 input/output
+
+faster-decoder和lattice-decoder解码器输入输出形式基本一致，只是含义略有不同。
+
+|             | faster-decoder               | lattice-decoder                                              |
+| ----------- | ---------------------------- | ------------------------------------------------------------ |
+| input       | HGLC.fst和decodable实例引用  | HGLC.fst和decodable实例引用                                  |
+| mid product | state-level fst (linear fst) | state-level fst (fst)                                        |
+| output      | word-level  one-best         | word-lattice(1.注意和N-best区别;<br />                      2.提供compact lattice形式) |
+
+
+
+## 1.2 one-best 
+
+​	one-best可以直接是word序列，也可以是linear fst，其每个arc的output symbol都是一个word。
+
+​	one-best使用场景比较单一，只有超参数族给定，且模型、优化准则及数据分布都满足假设时，能够直接给出最优识别词序列，简单明了。
+
+## 1.3 lattice
+
+​	lattice没有非常确切的定义，不同应用场景下，其arc上的五元组`(src_node,dst_node,input symbols,output symbols,weight)`内容和形式可能略有不同。当lattice中arc上的output symbol为word时，一般称之为word-lattice(词格)。
+
+​	使用lattice的原因有很多，如以下几点：
+
+​	1.当前解码图不能够反应数据的真实分布，从而产生偏差，需要更多信息的加入才能够获得更加准确的one-best，使用场景例如lm-rescoring。
+
+​	2.当前解码准则是最小化句错误率(SER)，与常用ASR评价标准(WER)存在失配问题，则可以使用基于lattice的MBR解码。
+
+​	3.鉴别性训练时，无法提供全部的解码路径信息，所以使用lattice解码结果近似全部解码空间（由于解码空间的稀疏性，该假设同样使用基于beam的解码路径裁剪）。
+
+​	4.对语音数据进行解码时，可以在lattice上搜索acoutic model weight,language model weight,word insert penalty最优超参数组合，避免手动设计参数，以期达到整体asr模型的最优性能。
+
+
+
+# 2 faster-decoder解码器基本原理和设计思想
+
+​	基于HCLG解码图的搜索最优路径问题等价于在有向无环图中求解两个节点之间的最短距离，求解方法有很多，其中viterbi算法最为常用，属于**图的广度优先搜索算法(BFS)**。viterbi算法在序列解码中很高效，不存在重复计算的问题。算法原理不再赘述，这里只介绍其朴素实现思想的局限性及优化方法(kaldi faster-decoder实现方式)。
+
+## 2.1 viterbi算法
+
+​	维特比算法(Viterbi Algorithm)是一种**动态规划算法**。维特比算法由安德鲁·维特比(Andrew Viterbi)于1967年提出，用于在数字通信链路中解卷积以消除噪音。此算法被广泛应用于CDMA和GSM数字蜂窝网络、拨号调制解调器、卫星、深空通信和802.11无线网络中解卷积码。现今也被常常用于**语音识别**、关键字识别、计算语言学和生物信息学中。
+
+​	原理和具体实现这里不再赘述，只给出朴素使用viterbi算法朴素实现语音识别的基本流程：
+
+​	1.维护一个dp table用来记录已经计算过的路径信息，路径信息包含当前帧路径节点路径累计cost和上一帧最优路径节点Index，其中累计cost：`accumulate_cost += cur_acoutice_cost + cur_graph_cost`。
+
+​	2.利用动态规划不断求解每一帧所有节点的路径信息，并填写dp table，当所有帧处理完毕后，获得最优路径节点的Index，并根据dp table中记录的上一帧最优路径节点的Index进行路径回溯。
+
+​	3.对应发音词典index转换为word序列。
+
+## 2.2 viterbi朴素实现的问题
+
+**1.dp table占用内存过大**
+
+​	viterbi算法属于动态规划问题，动态规划问题需要维护一个dp table用来记录已经计算过的路径信息。dp table大小为`num_frames*num_nodes*cell`，其中每一个cell都是一个路径node信息，至少包括两个方面的信息：`cur_total_cost`和`backtrace_pointer`。两个信息分别用于前向计算路径累计代价和反向回溯最优路径。以cell只包含前述两个信息为例：`100 (frames/sec)*10M (nodes)*8Bytes ≈ 8GB/sec ` 。这个内存占用规模在许多系统尤其是嵌入式上基本不可容忍。
+
+**2.时间复杂度无法满足实际使用**
+
+​	依然采用上述参数，计算复杂度为：`100 (frames/sec)*10M (nodes)*100 (cycles/state) ≈ 10^11cycles/sec`
+
+​	这个水平在CPU 1G主频的嵌入式硬件平台上不可实现，如1G主频的CPU。即使在一些高性能计算平台上能够达到`RTF<=1`的水平，也要考虑其综合效益问题。
+
+## 2.3 优化思路
+
+**1.只保留相邻两帧的信息，优化dp table**
+
+​	由于hmm state上的信息量满足一阶马尔可夫假设，所以当前state只依赖于上一个时刻的state，因此在实现dp table的时候可以，只保留相邻两帧的信息即可。
+
+**2.基于解码图稀疏性假设，采用token-passing和prune算法**
+
+​	解码图路径满足稀疏性假设，只有不到1%的解码路径会对最终的one-best路径产生影响，因此没有必要在任意时刻计算和存储所有的node的路径信息。由于固定大小的dp table无法满足这种需求，因此采用了更加灵活的token-passing算法。token-passing算法灵活性体现在任意时刻能够保留任意数量的token，从而利于各种prune算法的实现。但是灵活的token面临着遍历查找的问题，所以kaldi采用了更加灵活的hashlist存储任意时刻的所有tokens，hashlist的解析会在其他博文中展开，其优点是近似`O(1)`的查找时间。
+
+## 2.4 prune算法及实现
+
+​	基本思想：设置累计代价最大门限`threshold_accumulate_cost`，对当前帧emitting arcs不满足`threshold_accumulate_cost1`的token进行垃圾回收，对下一帧emitting arcs或其后续nonemitting arc不满足门限的`threshold_accumulate_cost2`不进行token passing。kaldi采用了手动设计两种剪枝方式混合搭配的方式自适应更新prune算法参数`threshold_accumulate_cost`，一种是`beam-search`(注意这里的beam和其他算法语境下的beam参数-存活路径个数略有区别)，另一种是`active-tokens restriction`。
+
+kaldi实现方式如下：
+
+- 手动设置`beam-width,active-tokens(max-active/min-active)`两个相关参数
+
+- 算法自适应根据初始`beam-width`和`active-tokens`更新`beam-width`,kaldi中还涉及一个自适应更新时用到的`beam-delta`，防止自适应更新的`beam-width`过于紧凑，导致剪枝掉可能的解码路径。
+
+- 利用`max_cost`剪枝当前帧的tokens获得`active-tokens`，同时获得apative_beam，对应流程图中①
+
+- 利用adaptive_beam计算得到`next_weight_cutoff`剪枝从当前nodes传递到emitting arcs的tokens，更新next_weight_cutoff，对应流程图中②。
+
+- 利用next_weight_cutoff剪枝下一帧从emitting arcs传递到后续nonemitting arcs上的tokens，对应流程图中③。
+
+
+​	prune流程图如下：
+
+![](C:\Users\zhang\Documents\GitHub\holdurhorses.github.io\_images\asr\prune.png)
+
+## 2.4 路径回溯
+
+​	路径回溯发生在两种情况`decoder.ReachedFinal() == True`或者`allow_partial == True`。满足这两种情况会进行路径回溯。
+
+流程如下：
+
+- 路径回溯获得的逆序线性arcs。
+
+- 删除解码器初始化时带来的virtual token。
+
+- 正序获得one-best路径中所有的arcs。
+
+- 删除**部分**epsilons，获得等价线性fst，解码器核心实现就到此位置。
+
+- 如果想要获得词级别结果，使用`GetLinearSymbolSequence`获得word-level解码结果。
+
+
+# 3 lattice-decoder解码器代码实现
+
+​	本文从lattice-decoder介绍kaldi的代码实现，并略带展示和faster-decoder的实现差异，两者原理基本一致，不同之处在于为了方便了记录lattice路径，而在token-passing时，创建了`ForwardLink`，因此导致了一些额外的实现。
+
+​	lattice实现了LatticeFasterDecoderTpl类模板，所有lattice-decoder的相关实现都是通过继承或者直接实例化该类模板。解码时为了高效，内部将FST转化为更加明确的类型。
+
+## 	3.1 重要接口与数据结构
+
+​		
+
+| interface          | purpose             | data structrue   | purpose                                                  |
+| ------------------ | ------------------- | ---------------- | -------------------------------------------------------- |
+| Decode()           | 解码器最上层接口    | ForwardLink      | 记录有效路径两个token之间的前向连接                      |
+| InitDecoding()     | 初始化              | StdToken         | lattice解码使用的标准token                               |
+| AdvanceDecoding()  | 解码                | BackpointerToken | 相对于StdToken额外记录了回溯信息，利于快速获取最优路径。 |
+| FinalizeDecoding() | 终止并清理现场      | TokenList        | 记录每帧的active tokens                                  |
+| GetBestPath()      | 获取最优路径        |                  |                                                          |
+| GetRawLattice()    | 获得state-level fst |                  |                                                          |
+|                    |                     |                  |                                                          |
+
+## 3.2 代码简析
+
+​	解码的核心代码实现在`AdvanceDecoding()`中:
+
+```c++
+  while (NumFramesDecoded() < target_frames_decoded) {
+    if (NumFramesDecoded() % config_.prune_interval == 0) {
+      // 每隔config_.prune_interval会对lattice进行prune，防止lattice路径过于庞大。
+      PruneActiveTokens(config_.lattice_beam * config_.prune_scale);
+    }
+    // 处理emitting arc
+    BaseFloat cost_cutoff = ProcessEmitting(decodable);
+    // 处理nonemitting arc
+    ProcessNonemitting(cost_cutoff);
+  }
+```
+
+​	
+
+​		lattice的生成核心代码在`getrawlattice()`中：
+
+```c++
+for (int32 f = 0; f <= num_frames; f++) {
+    for (token *tok = active_toks_[f].toks; tok != null; tok = tok->next) {
+      // 利用forwardlink构建lattice
+      stateid cur_state = tok_map[tok];
+      for (forwardlinkt *l = tok->links;
+           l != null;
+           l = l->next) {
+        arc arc(l->ilabel, l->olabel,
+                weight(l->graph_cost, l->acoustic_cost - cost_offset),
+                nextstate);
+        // 建立空fst，并按照拓扑结构建立state和its outgoing arcs
+        ofst->addarc(cur_state, arc);
+      }
+      }
+    }
+  }
+```
+
+## 3.3 核心实现流程
+
+**1.ProcessEmitting()**
+
+​	该函数是实现了token-passing时emitting arc的处理。
+
+流程：
+
+- 遍历每一个当前active token，对于outgoing emitting arc进行处理，使用前述prune算法对当前帧active token剪枝
+- 进行token passing，对下一帧的token进行剪枝。
+- 对于满足约束条件的下一帧的token，利用`FindOrAddToken()`查找替换cost较大的现有tokens或者直接插入新的token。
+- 构建从父token到当前token的`forwardlinkT`。
+
+**2.ProcessNonemitting()**
+
+​	该函数是实现了Token-passing时的nonemitting arc的处理，其使用了DFS(深度优先遍历)，迭代遍历nonemitting arc的所有successors。
+
+流程：
+
+- 获取全部emitting tokens。
+- 设置一个stack，用于DFS。
+- 清空当前token的forward link，重新生成更优的forward link。
+- 前向遍历不断进行token passing 并建立forward link。
+
+
+
