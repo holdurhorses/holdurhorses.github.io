@@ -26,7 +26,7 @@ render_with_liquid: false　
 
 | 目的和差别                                                   | kaldi                                                        | wenet                                                        |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| **waveform输入**，kaldi中实现了resampling<br />操作，wenet做了简化 | void AcceptWaveform(BaseFloat sampling_rate,  <br />constVectorBase<BaseFloat> &waveform) = 0; | void FeaturePipeline::AcceptWaveform(const <br />std::vector<float>& wav); |
+| **waveform输入**，kaldi中实现了resampling<br />操作，wenet做了简化 | void AcceptWaveform(<br />BaseFloat sampling_rate,  <br />constVectorBase<BaseFloat> &waveform) = 0; | void FeaturePipeline::AcceptWaveform(const <br />std::vector<float>& wav); |
 | **下层访问接口**，kaldi中提供了随机访问的接<br />口，使用NumFramesReady()信号，而<br />wenet严格按照顺序方式生产和消耗。同时<br />当模型需要的特征得不到满足时，会阻塞在<br />ReadOne() | void GetFrame(int32 frame, <br />VectorBase<BaseFloat> *feat); | bool ReadOne(std::vector<float>* feat)                       |
 | **cache**，kaldi中采用了简单的双端队列实<br />现，而wenet考虑到多线程部署问题，采<br />用了更为智能的BlockingQueue，但会阻<br />塞线程。 | std::deque<Vector<BaseFloat>*> items_;                       | BlockingQueue<std::vector<float >> feature_queue_;           |
 | **offset**                                                   | feature_.Size()                                              | num_frames_                                                  |
@@ -41,22 +41,22 @@ render_with_liquid: false　
 | 目的和差别                                                   | kaldi                                                        | wenet                                                        |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | **feature输入**                                              | 非阻塞式，NumFramesReady()                                   | 阻塞式                                                       |
-| **下层访问接口**，kaldi中提供了LogLikelihood()惰性触发网络计算，而wenet每个chunk直接触发网络前向计算。 | BaseFloat LogLikelihood(int32 frame, int32 index);           | model_->torch_model()                                      ->run_method("ctc_activation", chunk_out) .toTensor()[0]; |
-| **cache**，kaldi中所有的cache内部进行统一管理(内部相对复杂的dilated 1d-cnn cache结构)，只要满足一个chunk的特征数据即可计算。wenet显式传入cache，同时left context feature也需要cache。 | 所有cache内部管理。                                          | **subsampling_cache:** subsampling的输出的cache。<br />**elayers_output_cache**:所有conformer block的输出的cache。<br />**conformer_cnn_cache**: conformer block内部 causal conv层的左侧依赖的输入cache。 |
-| **网络结构和上下文**，网络基本没有太多共同之处。在subsampling上略有共同点，kaldi 实现了1d-cnn的叠加，wenet使用2d-cnn，优化帧率和解码计算量。kaldi为了避免右侧依赖过长而使用了不对称的网络结构，使右侧依赖相对较小。wenet只依赖左侧chunk和conformer 内部使用左侧依赖的casual cnn，使得只有在subsampling时引入少许右侧依赖。 | subsampling: dilated 1d-cnn叠加降低计算量和跳帧解码降低帧率<br /><br />**一种可能配置**<br />chunk_size =18<br />right_context = 9<br />left_context = 12 | subsampling: 2d-cnn直接降低帧率且降低计算量<br />**一种可能配置**<br />chunk_size =16\*4(wenet直接从decoder角度描述chunk_size，则实际的net chunk_size = subsampling_factor\*chunk_size)<br />right_context = 6<br />left_context = num_left_chunks\*chunk_size |
+| **下层访问接口**，kaldi中提供了<br />LogLikelihood()惰性触发网络<br />计算，而wenet每个chunk直<br />接触发网络前向计算。 | BaseFloat LogLikelihood(int32 frame, int32 index);           | model_->torch_model()                                      ->run_method("ctc_activation", chunk_out) .toTensor()[0]; |
+| **cache**，kaldi中所有的cache内部<br />进行统一管理(内部相对复杂的<br />dilated 1d-cnn cache结构)，<br />只要满足一个chunk的特征数据<br />即可计算。wenet显式传入cache，<br />同时left context feature也需要cache。 | 所有cache内部管理。                                          | **subsampling_cache:** subsampling的输出的cache。<br />**elayers_output_cache**:所有conformer block的输出的cache。<br />**conformer_cnn_cache**: conformer block内部 causal conv层的左侧依赖的输入cache。 |
+| **网络结构和上下文**，网络基本没有<br />太多共同之处。在subsampling上<br />略有共同点，kaldi 实现了1d-cnn<br />的叠加，wenet使用2d-cnn，优化<br />帧率和解码计算量。kaldi为了避免<br />右侧依赖过长而使用了不对称的网络结构<br />，使右侧依赖相对较小。wenet只<br />依赖左侧chunk和conformer 内部<br />使用左侧依赖的casual cnn，使得<br />只有在subsampling时引入少许右侧依赖。 | subsampling: dilated 1d-cnn叠加降低计算量和跳帧解码降低帧率<br /><br />**一种可能配置**<br />chunk_size =18<br />right_context = 9<br />left_context = 12 | subsampling: 2d-cnn直接降低帧率且降低计算量<br />**一种可能配置**<br />chunk_size =16\*4(wenet直接从decoder角度描述chunk_size，则实际的net chunk_size = subsampling_factor\*chunk_size)<br />right_context = 6<br />left_context = num_left_chunks\*chunk_size |
 
 # decoder
 
 　　kaldi一般采用基于WFST结构的HCLG解码图进行解码，而wenet由于端对端网络结构的特殊性，采用了多种解码策略，比较重要的有两种：1.基于WFST结构的TLG解码图进行解码。2.基于CTC prefix beam search的direct decode和attention parallel rescoring。方法1和kaldi基本一致，而方法2和kaldi无关。同时两个decoder的含义略有不同，kaldi decoder只负责给定网络前向结果后的解码搜索。而wenet将网络前向和解码搜索整合到torch_asr_decoder中简化了流程，但是实际的解码在SearchInterface的派生类中实现，当实现为CtcWfstBeamSearch和kaldi几乎一致。
 　　同时由于基于WFST的解码方式基本依赖左侧，因此具有天然的online特性。对于lattice-faster-online-decoder，相对去之前lattice-faster-decoder实现了更为高效的get partial result，cache也只是为了记录active_tokens_。
 
-| 目的和差别          | kaldi                                             | wenet                                                        |
-| ------------------- | ------------------------------------------------- | ------------------------------------------------------------ |
-| **score获取**       | BaseFloat LogLikelihood(int32 frame, int32 index) | ctc_log_probs = model_->torch_model()>run_method("ctc_activation", chunk_out).toTensor()[0];<br />实际由于复用了kaldi的LatticeFasterDecoder，所以当search函数采用kWfstBeamSearch模式时，采用了fake的decodable对象进行接口转换。 |
-| **decoder**         | lattice-faster-online-decoder                     | lattice-faster-online-decoder                                |
-| **Graph结构**       | HCLG                                              | 采用CtcWfstBeamSearch时会在TLG上进行搜索。 采用CtcPrefixBeamSearch时则没有使用WFST。 |
-| **search strategy** | beam search, max_active, min_active               | CtcPrefixBeamSearch: two pass beam prune<br /><br />CtcWfstBeamSearch: kaldi beam search, blank_skip_thresh skip blank frame. |
-| **output**          | one-best, n-best, lattice                         | CtcWfstBeamSearch: one-best,n-best,lattice<br />CtcPrefixBeamSearch: one-best,n-best |
+| 目的和差别          | kaldi                                                   | wenet                                                        |
+| ------------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
+| **score获取**       | BaseFloat LogLikelihood(int32 frame, <br />int32 index) | ctc_log_probs = model_->torch_model()>run_method("ctc_activation", chunk_out).toTensor()[0];<br />实际由于复用了kaldi的LatticeFasterDecoder，所以当search函数采用kWfstBeamSearch模式时，采用了fake的decodable对象进行接口转换。 |
+| **decoder**         | lattice-faster-online-decoder                           | lattice-faster-online-decoder                                |
+| **Graph结构**       | HCLG                                                    | 采用CtcWfstBeamSearch时会在TLG上进行搜索。 采用CtcPrefixBeamSearch时则没有使用WFST。 |
+| **search strategy** | beam search, max_active, min_active                     | CtcPrefixBeamSearch: two pass beam prune<br /><br />CtcWfstBeamSearch: kaldi beam search, blank_skip_thresh skip blank frame. |
+| **output**          | one-best, n-best, lattice                               | CtcWfstBeamSearch: one-best,n-best,lattice<br />CtcPrefixBeamSearch: one-best,n-best |
 
 # reference
 
