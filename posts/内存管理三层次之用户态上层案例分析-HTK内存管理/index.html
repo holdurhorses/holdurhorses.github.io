@@ -1,0 +1,581 @@
+<!DOCTYPE html><html lang="en" ><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"><meta name="day-prompt" content="days ago"><meta name="hour-prompt" content="hours ago"><meta name="minute-prompt" content="minutes ago"><meta name="justnow-prompt" content="just now"><meta name="generator" content="Jekyll v4.2.1" /><meta property="og:title" content="内存管理三层次之用户态上层案例分析：HTK内存管理" /><meta name="author" content="Zhang" /><meta property="og:locale" content="en" /><meta name="description" content="　　内存管理一直是一个程序设计绕不开的一个话题，尤其是当存在性能瓶颈或内存泄漏时，一个合理的内存分配和释放策略尤为重要。由于之前使用HTK作为快速验证语音相关算法的软件原型时，出现过内存泄漏的问题，借此机会研究了一下HTK的内存设计方法。本文以HTK内存管理设计为例介绍内存管理三个层次的最上层设计应用案例。" /><meta property="og:description" content="　　内存管理一直是一个程序设计绕不开的一个话题，尤其是当存在性能瓶颈或内存泄漏时，一个合理的内存分配和释放策略尤为重要。由于之前使用HTK作为快速验证语音相关算法的软件原型时，出现过内存泄漏的问题，借此机会研究了一下HTK的内存设计方法。本文以HTK内存管理设计为例介绍内存管理三个层次的最上层设计应用案例。" /><link rel="canonical" href="https://holdurhorses.github.io/posts/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86%E4%B8%89%E5%B1%82%E6%AC%A1%E4%B9%8B%E7%94%A8%E6%88%B7%E6%80%81%E4%B8%8A%E5%B1%82%E6%A1%88%E4%BE%8B%E5%88%86%E6%9E%90-HTK%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" /><meta property="og:url" content="https://holdurhorses.github.io/posts/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86%E4%B8%89%E5%B1%82%E6%AC%A1%E4%B9%8B%E7%94%A8%E6%88%B7%E6%80%81%E4%B8%8A%E5%B1%82%E6%A1%88%E4%BE%8B%E5%88%86%E6%9E%90-HTK%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" /><meta property="og:site_name" content="zhang" /><meta property="og:type" content="article" /><meta property="article:published_time" content="2021-11-29T21:10:00+08:00" /><meta name="twitter:card" content="summary" /><meta property="twitter:title" content="内存管理三层次之用户态上层案例分析：HTK内存管理" /><meta name="twitter:site" content="@twitter_username" /><meta name="twitter:creator" content="@Zhang" /><meta name="google-site-verification" content="google_meta_tag_verification" /> <script type="application/ld+json"> {"author":{"@type":"Person","name":"Zhang"},"headline":"内存管理三层次之用户态上层案例分析：HTK内存管理","dateModified":"2021-11-29T21:10:00+08:00","datePublished":"2021-11-29T21:10:00+08:00","description":"　　内存管理一直是一个程序设计绕不开的一个话题，尤其是当存在性能瓶颈或内存泄漏时，一个合理的内存分配和释放策略尤为重要。由于之前使用HTK作为快速验证语音相关算法的软件原型时，出现过内存泄漏的问题，借此机会研究了一下HTK的内存设计方法。本文以HTK内存管理设计为例介绍内存管理三个层次的最上层设计应用案例。","url":"https://holdurhorses.github.io/posts/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86%E4%B8%89%E5%B1%82%E6%AC%A1%E4%B9%8B%E7%94%A8%E6%88%B7%E6%80%81%E4%B8%8A%E5%B1%82%E6%A1%88%E4%BE%8B%E5%88%86%E6%9E%90-HTK%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/","@type":"BlogPosting","mainEntityOfPage":{"@type":"WebPage","@id":"https://holdurhorses.github.io/posts/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86%E4%B8%89%E5%B1%82%E6%AC%A1%E4%B9%8B%E7%94%A8%E6%88%B7%E6%80%81%E4%B8%8A%E5%B1%82%E6%A1%88%E4%BE%8B%E5%88%86%E6%9E%90-HTK%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/"},"@context":"https://schema.org"}</script><title>内存管理三层次之用户态上层案例分析：HTK内存管理 | zhang</title><link rel="apple-touch-icon" sizes="180x180" href="/assets/img/favicons/apple-touch-icon.png"><link rel="icon" type="image/png" sizes="32x32" href="/assets/img/favicons/favicon-32x32.png"><link rel="icon" type="image/png" sizes="16x16" href="/assets/img/favicons/favicon-16x16.png"><link rel="manifest" href="/assets/img/favicons/site.webmanifest"><link rel="shortcut icon" href="/assets/img/favicons/favicon.ico"><meta name="apple-mobile-web-app-title" content="zhang"><meta name="application-name" content="zhang"><meta name="msapplication-TileColor" content="#da532c"><meta name="msapplication-config" content="/assets/img/favicons/browserconfig.xml"><meta name="theme-color" content="#ffffff"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"><link rel="dns-prefetch" href="https://fonts.gstatic.com"><link rel="preconnect" href="https://www.google-analytics.com" crossorigin="use-credentials"><link rel="dns-prefetch" href="https://www.google-analytics.com"><link rel="preconnect" href="https://www.googletagmanager.com" crossorigin="anonymous"><link rel="dns-prefetch" href="https://www.googletagmanager.com"><link rel="preconnect" href="https://cdn.jsdelivr.net"><link rel="dns-prefetch" href="https://cdn.jsdelivr.net"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@5.11.2/css/all.min.css"><link rel="stylesheet" href="/assets/css/style.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/afeld/bootstrap-toc@1.0.1/dist/bootstrap-toc.min.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/magnific-popup@1.1.0/dist/magnific-popup.min.css"> <script src="https://cdn.jsdelivr.net/npm/jquery@3/dist/jquery.min.js"></script><body data-spy="scroll" data-target="#toc"><div id="sidebar" class="d-flex flex-column align-items-end" lang="en"><div class="profile-wrapper text-center"><div id="avatar"> <a href="/" alt="avatar" class="mx-auto"> </a></div><div class="site-title mt-3"> <a href="/">zhang</a></div><div class="site-subtitle font-italic">asr/tts/sed/npl related</div></div><ul class="w-100"><li class="nav-item"> <a href="/" class="nav-link"> <i class="fa-fw fas fa-home ml-xl-3 mr-xl-3 unloaded"></i> <span>HOME</span> </a><li class="nav-item"> <a href="/categories/" class="nav-link"> <i class="fa-fw fas fa-stream ml-xl-3 mr-xl-3 unloaded"></i> <span>CATEGORIES</span> </a><li class="nav-item"> <a href="/tags/" class="nav-link"> <i class="fa-fw fas fa-tag ml-xl-3 mr-xl-3 unloaded"></i> <span>TAGS</span> </a><li class="nav-item"> <a href="/archives/" class="nav-link"> <i class="fa-fw fas fa-archive ml-xl-3 mr-xl-3 unloaded"></i> <span>ARCHIVES</span> </a><li class="nav-item"> <a href="/about/" class="nav-link"> <i class="fa-fw fas fa-info-circle ml-xl-3 mr-xl-3 unloaded"></i> <span>ABOUT</span> </a></ul><div class="sidebar-bottom mt-auto d-flex flex-wrap justify-content-center align-items-center"> <a href="https://github.com/holdurhorses" aria-label="github" class="order-3" target="_blank" rel="noopener"> <i class="fab fa-github"></i> </a> <a href="https://twitter.com/twitter_username" aria-label="twitter" class="order-4" target="_blank" rel="noopener"> <i class="fab fa-twitter"></i> </a> <a href=" javascript:location.href = 'mailto:' + ['example','doamin.com'].join('@')" aria-label="email" class="order-5" > <i class="fas fa-envelope"></i> </a> <a href="/feed.xml" aria-label="rss" class="order-6" > <i class="fas fa-rss"></i> </a> <span class="icon-border order-2"></span> <span id="mode-toggle-wrapper" class="order-1"> <i class="mode-toggle fas fa-adjust"></i> <script type="text/javascript"> class ModeToggle { static get MODE_KEY() { return "mode"; } static get DARK_MODE() { return "dark"; } static get LIGHT_MODE() { return "light"; } constructor() { if (this.hasMode) { if (this.isDarkMode) { if (!this.isSysDarkPrefer) { this.setDark(); } } else { if (this.isSysDarkPrefer) { this.setLight(); } } } var self = this; /* always follow the system prefers */ this.sysDarkPrefers.addListener(function() { if (self.hasMode) { if (self.isDarkMode) { if (!self.isSysDarkPrefer) { self.setDark(); } } else { if (self.isSysDarkPrefer) { self.setLight(); } } self.clearMode(); } self.updateMermaid(); }); } /* constructor() */ setDark() { $('html').attr(ModeToggle.MODE_KEY, ModeToggle.DARK_MODE); sessionStorage.setItem(ModeToggle.MODE_KEY, ModeToggle.DARK_MODE); } setLight() { $('html').attr(ModeToggle.MODE_KEY, ModeToggle.LIGHT_MODE); sessionStorage.setItem(ModeToggle.MODE_KEY, ModeToggle.LIGHT_MODE); } clearMode() { $('html').removeAttr(ModeToggle.MODE_KEY); sessionStorage.removeItem(ModeToggle.MODE_KEY); } get sysDarkPrefers() { return window.matchMedia("(prefers-color-scheme: dark)"); } get isSysDarkPrefer() { return this.sysDarkPrefers.matches; } get isDarkMode() { return this.mode == ModeToggle.DARK_MODE; } get isLightMode() { return this.mode == ModeToggle.LIGHT_MODE; } get hasMode() { return this.mode != null; } get mode() { return sessionStorage.getItem(ModeToggle.MODE_KEY); } /* get the current mode on screen */ get modeStatus() { if (this.isDarkMode || (!this.hasMode && this.isSysDarkPrefer) ) { return ModeToggle.DARK_MODE; } else { return ModeToggle.LIGHT_MODE; } } updateMermaid() { if (typeof mermaid !== "undefined") { let expectedTheme = (this.modeStatus === ModeToggle.DARK_MODE? "dark" : "default"); let config = { theme: expectedTheme }; /* re-render the SVG › <https://github.com/mermaid-js/mermaid/issues/311#issuecomment-332557344> */ $(".mermaid").each(function() { let svgCode = $(this).prev().children().html(); $(this).removeAttr("data-processed"); $(this).html(svgCode); }); mermaid.initialize(config); mermaid.init(undefined, ".mermaid"); } } flipMode() { if (this.hasMode) { if (this.isSysDarkPrefer) { if (this.isLightMode) { this.clearMode(); } else { this.setLight(); } } else { if (this.isDarkMode) { this.clearMode(); } else { this.setDark(); } } } else { if (this.isSysDarkPrefer) { this.setLight(); } else { this.setDark(); } } this.updateMermaid(); } /* flipMode() */ } /* ModeToggle */ let toggle = new ModeToggle(); $(".mode-toggle").click(function() { toggle.flipMode(); }); </script> </span></div></div><div id="topbar-wrapper" class="row justify-content-center topbar-down"><div id="topbar" class="col-11 d-flex h-100 align-items-center justify-content-between"> <span id="breadcrumb"> <span> <a href="/"> Home </a> </span> <span>内存管理三层次之用户态上层案例分析：HTK内存管理</span> </span> <i id="sidebar-trigger" class="fas fa-bars fa-fw"></i><div id="topbar-title"> Post</div><i id="search-trigger" class="fas fa-search fa-fw"></i> <span id="search-wrapper" class="align-items-center"> <i class="fas fa-search fa-fw"></i> <input class="form-control" id="search-input" type="search" aria-label="search" autocomplete="off" placeholder="Search..."> <i class="fa fa-times-circle fa-fw" id="search-cleaner"></i> </span> <span id="search-cancel" >Cancel</span></div></div><div id="main-wrapper"><div id="main"><div class="row"><div id="post-wrapper" class="col-12 col-lg-11 col-xl-8"><div class="post pl-1 pr-1 pl-sm-2 pr-sm-2 pl-md-4 pr-md-4"><h1 data-toc-skip>内存管理三层次之用户态上层案例分析：HTK内存管理</h1><div class="post-meta text-muted d-flex flex-column"><div> <span class="semi-bold"> Zhang </span> on <span class="timeago " data-toggle="tooltip" data-placement="bottom" title="Mon, Nov 29, 2021, 9:10 PM +0800" >Nov 29<i class="unloaded">2021-11-29T21:10:00+08:00</i> </span></div><div> <span class="readtime" data-toggle="tooltip" data-placement="bottom" title="4239 words">23 min read</span></div></div><div class="post-content"><p>　　内存管理一直是一个程序设计绕不开的一个话题，尤其是当存在性能瓶颈或内存泄漏时，一个合理的内存分配和释放策略尤为重要。由于之前使用HTK作为快速验证语音相关算法的软件原型时，出现过内存泄漏的问题，借此机会研究了一下HTK的内存设计方法。本文以HTK内存管理设计为例介绍内存管理三个层次的最上层设计应用案例。</p><h1 id="1-内存管理的一些基本问题">1 内存管理的一些基本问题</h1><h2 id="11-内存管理三个层次">1.1 内存管理三个层次</h2><p>　　内存管理实现一般有三个层次，分别为内核态、用户态的底层软件应用和上层软件应用。</p><ul><li>内核态</ul><p>　　内核态是操作系统负责内存管理。操作系统直接面对各种物理存储器，利用各种策略进行合理的分配，同时抽象后提供给用户态进行系统调用。</p><ul><li>用户态底层</ul><p>　　用户态底层一般是各种高度优化的并面对用户的内存管理器，通过系统调用获得大块内存，然后面对用户的不同内存请求使用不用的策略，如glibc中的ptmalloc2，通过brk和mmap这两个系统调用获取内存空间，又或者google的tcmalloc，tcmalloc在单线程或者高并发时相对ptmalloc2都有很不错的提升。</p><ul><li>用户态上层</ul><p>　　用户态上层是用户面向应用直接实现的各种功能库，由于各类应用有不一样的内存分配侧重点，所以在该层面实现一个内存管理器，可以减少和下一层次内存管理器的交互代价，且了解用户的使用逻辑，达到更加轻便和高效的效果。</p><h2 id="12-一个好的内存管理器应该具备哪些优点">1.2 一个好的内存管理器应该具备哪些优点</h2><ul><li>分配迅速：对于某些高并发请求类场景，内存分配速度可能会成为一个瓶颈。<li>释放方便：对于大型应用，可能存在复杂的内存分配逻辑，如果不加以统一管理，很有可能存在内存泄漏的问题。<li>减少内存碎片：合理的分配和回收内存空间。</ul><h2 id="13-用户态内存分配思想">1.3 用户态内存分配思想</h2><ul><li>大内存和小内存分开管理，大内存一般利用系统调用，而小内存则更加考验内存管理器的实现能力。<li>不同层次的精细化管理，如多线程分配问题，不同大小的精细申请内存。<li>何时选择从内核态申请内存和返还内存。<li>尽量减少同低层次内存管理器交互也是一个关键因素，越上层的实现可能越高效，当然也可能增加了软件实现成本和迁移成本。</ul><h1 id="2-htk内存管理">2 HTK内存管理</h1><p>　　HTK内存管理是由HMEM模块实现，所有程序通过调用HMEM实现内存分配和释放。</p><p>　　HTK中很多tools需要为不同的数据结构动态的申请大量的内存。为了能够精准和高效的分配内存，并且能够统一管理内存，HTK实现了自己的内存管理器HMEM。注意HTK的数学计算库等基础模块的内存分配也是利用HMEM，可以说HMEM是HTK很底层的存在。</p><h2 id="21-颗粒度设计">2.1 颗粒度设计</h2><p>大颗粒度划分为三个形态：</p><ul><li><p><strong>MHEAP</strong>：每次调用该HEAP只能分配固定大小的内存，即无视用户临时意图，但是new/free是可以随机访问的。同时提供global reset，即统一管理。好处就是由于分配的大小固定，所以分配迅速，且支持随机访问，则可以随时进行分配和释放。使用场景有限，一般用于大量重复的结构体等数据结构的内存管理。</p><p>随即访问含义：能够从block list中任意block和该block内部的任意位置（任意一个element）分配和回收用户内存。</p><p>思想：分配删除都比较方便，但是只对特定大小的结构体好用。</p><p>应用场合：大量重复且分配和释放逻辑不确定的结构体，如TOKEN。</p><li><p><strong>MSTACK</strong>：每次申请可以获得任意大小的内存，但是new/free只支持LIFO，即入栈出栈模式。同时提供global reset，即统一管理。好处是用户可以申请任意大小的内存，所以应用比较广泛。释放时只能释放位于栈顶的内存块。</p><p>LIFO含义：只能从block list中第一个block和该block内部最上层空间分配和回收用户内存。</p><p>思想：分配删除受限，但是可以分配任意大小的内存，注意删除时，会把比要删除内存更早分配的所有内存释放，此举意味着最好内存使用逻辑符合后分配先释放原则，用于符合层次调用的内存顺序分配尤其好用，能够保证内存按逻辑释放（防止内存泄漏），如后调用的深层次内存在程序结束时首先被释放。</p><p>应用场合：用户申请大小不一致，但是逻辑符合内存后分配先释放原则的层次调用比较好用。</p><li><p><strong>CHEAP</strong>：顾名思义直接调用C库，进行任意大小的内存分配，同时可以随机malloc/free，但是无法global reset。</p><p>对应代码如下：</p><div class="language-c highlighter-rouge"><div class="code-header"> <span text-data=" C "><i class="fa-fw fas fa-code small"></i></span> <button aria-label="copy" title-succeed="Copied!"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+</pre><td class="rouge-code"><pre><span class="k">typedef</span> <span class="k">enum</span><span class="p">{</span><span class="n">MHEAP</span><span class="p">,</span><span class="n">MSTAK</span><span class="p">,</span><span class="n">CHEAP</span><span class="p">}</span> <span class="n">HEAPTYPE</span><span class="p">;</span>
+<span class="k">typedef</span> <span class="k">struct</span><span class="p">{</span> 
+    <span class="kt">char</span><span class="o">*</span>    <span class="n">name</span><span class="p">;</span>    
+    <span class="n">HEAPTYPE</span> <span class="n">type</span><span class="p">;</span>    
+    <span class="kt">float</span>    <span class="n">growf</span><span class="p">;</span>       
+    <span class="kt">size_t</span>   <span class="n">elemSize</span><span class="p">;</span>     
+    <span class="kt">size_t</span>   <span class="n">minElem</span><span class="p">;</span>  
+    <span class="kt">size_t</span>   <span class="n">maxElem</span><span class="p">;</span>   
+    <span class="kt">size_t</span>   <span class="n">curElem</span><span class="p">;</span>     
+    <span class="kt">size_t</span>   <span class="n">totUsed</span><span class="p">;</span>    
+    <span class="kt">size_t</span>   <span class="n">totAlloc</span><span class="p">;</span>      
+    <span class="n">BlockP</span>   <span class="n">heap</span><span class="p">;</span>            
+    <span class="n">Boolean</span>  <span class="n">protectStk</span><span class="p">;</span> 
+<span class="p">}</span><span class="n">MemHeap</span><span class="p">;</span>
+</pre></table></code></div></div></ul><p>中颗粒度：</p><ul><li><p><strong>block</strong>：除了CHEAP，直接遵循glibc实现标准，其他两个以block为颗粒度从下层申请内存。block的大小可以自适应的小幅度增长，受到<code class="language-plaintext highlighter-rouge">growf</code>参数支配。</p><p>对应代码如下：</p><div class="language-c highlighter-rouge"><div class="code-header"> <span text-data=" C "><i class="fa-fw fas fa-code small"></i></span> <button aria-label="copy" title-succeed="Copied!"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+</pre><td class="rouge-code"><pre><span class="k">typedef</span> <span class="k">struct</span> <span class="n">_Block</span><span class="p">{</span>  
+    <span class="kt">size_t</span> <span class="n">numFree</span><span class="p">;</span>             
+    <span class="kt">size_t</span> <span class="n">firstFree</span><span class="p">;</span> 
+    <span class="kt">size_t</span> <span class="n">numElem</span><span class="p">;</span> 
+    <span class="n">ByteP</span> <span class="n">used</span><span class="p">;</span>    
+    <span class="n">Ptr</span> <span class="n">data</span><span class="p">;</span>       
+    <span class="n">BlockP</span> <span class="n">next</span><span class="p">;</span>            
+<span class="p">}</span><span class="n">Block</span><span class="p">;</span>
+</pre></table></code></div></div></ul><p>小颗粒度：</p><ul><li><strong>element</strong>：一个block内有多个element，MHEAP每个block的elementSize可以是任意大小，而MSTACK每个block的elementSize大小永远是<code class="language-plaintext highlighter-rouge">1byte</code></ul><h2 id="22-统一管理">2.2 统一管理</h2><p>使用全局的heapList记录所有类型的内存分配操作：</p><div class="language-c highlighter-rouge"><div class="code-header"> <span text-data=" C "><i class="fa-fw fas fa-code small"></i></span> <button aria-label="copy" title-succeed="Copied!"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+</pre><td class="rouge-code"><pre><span class="k">typedef</span> <span class="k">struct</span> <span class="n">_MemHeapRec</span><span class="p">{</span>
+    <span class="n">MemHeap</span> <span class="o">*</span><span class="n">heap</span><span class="p">;</span>
+    <span class="k">struct</span> <span class="n">_MemHeapRec</span> <span class="o">*</span><span class="n">next</span><span class="p">;</span>
+<span class="p">}</span><span class="n">MemHeapRec</span><span class="p">;</span>
+<span class="k">static</span> <span class="n">MemHeapRec</span> <span class="o">*</span><span class="n">heapList</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span> 
+</pre></table></code></div></div><p><code class="language-plaintext highlighter-rouge">MemHeapRec</code>主要通过<code class="language-plaintext highlighter-rouge">RecordHeap</code>和<code class="language-plaintext highlighter-rouge">UnRecordHeap</code>两个函数来完成内存堆的记录和擦除操作。维护一个全局的列表，有利于进行统一的操作如：global reset。同时提供了一个很实用的函数<code class="language-plaintext highlighter-rouge">PrintHeapStats()</code>，用于查看当前所有已经分配的Heap的状态。</p><h2 id="23-接口设计">2.3 接口设计</h2><div class="table-wrapper"><table><thead><tr><th>上层接口<th>功能<tbody><tr><td>void CreateHeap(MemHeap *x, char *name, HeapType type, size_t elemSize, float growf, size_t numElem, size_t maxElem)<td>创建任意一个类型的Heap，并将其记录在heapList中。对于三种Heap创建虽然输入参数一致，但是内部逻辑基本不一致，有些参数可能会失效。<tr><td>void ResetHeap(MemHeap *x)<td>重置Heap，对于CHEAP该操作不起作用，MHEAP释放所有的block，而MSTACK会保留第一个block，因此要注意可能会导致内存泄漏。<tr><td>void DeleteHeap(MemHeap *x)<td>彻底删除一个HEAP，该操作将某个类型的HEAP直接抹除，释放其所有block，对于MSTACK会额外进行一次block释放，从全局heapList删除其信息，最终删除该HEAP结构体内存。<tr><td>void *New(MemHeap *x, size_t size)<td><strong>用户主要接口</strong>：从指定类型的堆中分配指定大小的内存<tr><td>void Dispose(MemHeap *x, void *p)<td>从指定类型的堆中删除指定的内存指针<tr><td><strong>核心重要函数</strong><td><strong>功能</strong><tr><td>static void *GetElem(BlockP p, size_t elemSize, HeapType type)<td>从指定的块中分配内存，被New函数调用，用于现有block满足内存申请大小时。<tr><td>BlockP AllocBlock(size_t size , size_t num , HeapType type)<td>从下一层如glibc层内存管理器申请内存，被New调用，用于现有block无法满足内存申请大小时。</table></div><h2 id="24-代码简析">2.4 代码简析</h2><p>章节2.3所有接口中最能体现内存管理设计思想的函数为以下三个：</p><p><strong>New():</strong></p><ol><li><p>从new函数可以看出用户内存被分配时永远使用的是位于block链表的第一个block。</p><li><p>MHEAP是因为及时调整用于用户申请内存分配的block的位置，MSTACK是因为其只能从栈顶分配内存也即第一个block。</p><li><p>MHEAP由于分配的是固定大小的elem，所以有一个table状态表维护分配和释放信息，分配时flag = 1。</p><p>MSTACK由于可以是随机大小，同时在block list维度和block内部都遵循栈顶申请和释放准则。</p></ol><p><strong>Dispose():</strong></p><ol><li>MHEAP可以删除block list维度和block内部任意位置的内存，MSTACK只能删除block list维度和block内部维度上的栈顶内存，因此会把之前所有比指针p先分配但是不属于指针p指向的内存的所有内存全部释放掉，包括其他block。</ol><p><strong>GetElem():</strong></p><ol><li>MHEAP从任意block分配一个合适的固定elementSize大小的内存。<li>MSTACK栈顶block及block内部顶部分配合适的任意大小的内存。</ol><div class="language-c highlighter-rouge"><div class="code-header"> <span text-data=" C "><i class="fa-fw fas fa-code small"></i></span> <button aria-label="copy" title-succeed="Copied!"><i class="far fa-clipboard"></i></button></div><div class="highlight"><code><table class="rouge-table"><tbody><tr><td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+66
+67
+68
+69
+70
+71
+72
+73
+74
+75
+76
+77
+78
+79
+80
+81
+82
+83
+84
+85
+86
+87
+88
+89
+90
+91
+92
+93
+94
+95
+96
+97
+98
+99
+100
+101
+102
+103
+104
+105
+106
+107
+108
+109
+110
+111
+112
+113
+114
+115
+116
+117
+118
+119
+120
+121
+122
+123
+124
+125
+126
+127
+128
+129
+130
+131
+132
+133
+134
+135
+136
+137
+138
+139
+140
+141
+142
+143
+144
+145
+146
+147
+148
+149
+150
+151
+152
+153
+154
+155
+156
+157
+158
+159
+160
+161
+162
+163
+164
+165
+166
+167
+168
+169
+170
+171
+172
+173
+174
+175
+176
+177
+178
+179
+180
+181
+182
+183
+184
+185
+186
+187
+188
+189
+190
+191
+192
+193
+194
+195
+196
+197
+198
+199
+200
+201
+202
+203
+204
+205
+206
+207
+208
+209
+210
+211
+212
+213
+214
+215
+216
+217
+218
+219
+220
+221
+222
+223
+224
+225
+226
+227
+228
+229
+230
+231
+232
+233
+234
+235
+236
+237
+238
+239
+240
+241
+242
+243
+244
+245
+246
+247
+248
+249
+250
+251
+252
+253
+254
+255
+256
+257
+258
+259
+260
+261
+262
+263
+</pre><td class="rouge-code"><pre><span class="kt">void</span> <span class="o">*</span><span class="nf">New</span><span class="p">(</span><span class="n">MemHeap</span> <span class="o">*</span><span class="n">x</span><span class="p">,</span> <span class="kt">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="c1">//返回从内存堆x分配大小为size的新元素指针</span>
+
+<span class="p">{</span>
+    <span class="kt">void</span> <span class="o">*</span><span class="n">q</span><span class="p">;</span>
+    <span class="n">BlockP</span> <span class="n">newp</span><span class="p">;</span>
+    <span class="kt">size_t</span> <span class="n">num</span><span class="p">,</span><span class="n">bytes</span><span class="p">,</span><span class="o">*</span><span class="n">ip</span><span class="p">,</span><span class="n">chdr</span><span class="p">;</span>
+    <span class="n">Boolean</span> <span class="n">noSpace</span><span class="p">;</span>
+    <span class="n">Ptr</span> <span class="o">*</span><span class="n">pp</span><span class="p">;</span>
+    <span class="cm">/*检查当前堆是否创建，只有没有创建的堆才会elemSize = 0*/</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">elemSize</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">HError</span><span class="p">(</span><span class="mi">5174</span><span class="p">,</span> <span class="s">"New: heap %s not initialised"</span><span class="p">,</span>
+               <span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="o">==</span><span class="nb">NULL</span><span class="p">)</span> <span class="o">?</span> <span class="s">"Unnamed"</span> <span class="o">:</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">);</span>
+    <span class="k">switch</span><span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">type</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="k">case</span> <span class="n">MHEAP</span><span class="p">:</span>
+ 			<span class="c1">// ATTENTION:用户每次只能申请elemSize大小的内存，但是每次申请的新block大小是num* elemSize大小的内存</span>
+            <span class="c1">// 不论新申请的block还是已存在的满足要求的block都会被放到表头。这样每次都是从表头分配内存。</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">size</span> <span class="o">!=</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="n">size</span> <span class="o">!=</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">elemSize</span><span class="p">)</span> 
+               <span class="n">HError</span><span class="p">(</span><span class="mi">5173</span><span class="p">,</span><span class="s">"New: MHEAP req for %u size elem from heap %s size %u"</span><span class="p">,</span>
+               <span class="n">size</span> <span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span> <span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">elemSize</span><span class="p">);</span>
+             <span class="n">noSpace</span> <span class="o">=</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">totUsed</span> <span class="o">==</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">totAlloc</span><span class="p">;</span> 
+             <span class="k">if</span> <span class="p">(</span><span class="n">noSpace</span> <span class="o">||</span> <span class="p">(</span><span class="n">q</span> <span class="o">=</span> <span class="n">GetElem</span><span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span> <span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">elemSize</span> <span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">type</span><span class="p">))</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span>
+             <span class="p">{</span>	 
+                 <span class="c1">// 有空间的情况下，搜索存在至少一个空闲element的block，每次也只能分配一个element。</span>
+                 <span class="c1">// BlockReorder遍历所有block 如果存在满足要求的block，移动到最前面。</span>
+                 <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">noSpace</span><span class="p">)</span>
+                     <span class="n">BlockReorder</span><span class="p">(</span><span class="o">&amp;</span><span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span><span class="p">),</span> <span class="mi">1</span><span class="p">);</span> 
+                 <span class="c1">// MHEAP没有空间，或者分配失败</span>
+                 <span class="k">if</span> <span class="p">(</span><span class="n">noSpace</span> <span class="o">||</span> <span class="p">(</span><span class="n">q</span> <span class="o">=</span> <span class="n">GetElem</span><span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">elemSize</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">type</span><span class="p">))</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span>
+                 <span class="p">{</span>
+                     <span class="c1">// curElem记录当前最大block分配element个数，num为根据增长因子growf自适应增长后的大小，但同时被						 //maxElem约束</span>
+                     <span class="n">num</span> <span class="o">=</span> <span class="p">(</span><span class="kt">size_t</span><span class="p">)</span> <span class="p">((</span><span class="kt">double</span><span class="p">)</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">curElem</span> <span class="o">*</span> <span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">growf</span> <span class="o">+</span> <span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">0</span><span class="p">.</span><span class="mi">5</span><span class="p">);</span>
+                     <span class="k">if</span> <span class="p">(</span><span class="n">num</span> <span class="o">&gt;</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">maxElem</span><span class="p">)</span>
+                        <span class="n">num</span> <span class="o">=</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">maxElem</span><span class="p">;</span>
+                     <span class="c1">// 分配新block</span>
+                     <span class="n">newp</span> <span class="o">=</span> <span class="n">AllocBlock</span><span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">elemSize</span><span class="p">,</span> <span class="n">num</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">type</span><span class="p">);</span> 
+                     <span class="c1">// x-&gt;totAlloc和 num都是element的个数;</span>
+                     <span class="n">x</span><span class="o">-&gt;</span><span class="n">totAlloc</span> <span class="o">+=</span> <span class="n">num</span><span class="p">;</span>
+                     <span class="n">x</span><span class="o">-&gt;</span><span class="n">curElem</span> <span class="o">=</span> <span class="n">num</span><span class="p">;</span>
+                     <span class="c1">// 头插法放入表头，即新分配的block永远为第一个block</span>
+                     <span class="n">newp</span><span class="o">-&gt;</span><span class="n">next</span> <span class="o">=</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span><span class="p">;</span>
+                     <span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span> <span class="o">=</span> <span class="n">newp</span><span class="p">;</span>
+                     <span class="k">if</span> <span class="p">((</span><span class="n">q</span><span class="o">=</span><span class="n">GetElem</span><span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">elemSize</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">type</span><span class="p">))</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span>
+                        <span class="n">HError</span><span class="p">(</span><span class="mi">5191</span><span class="p">,</span><span class="s">"New: null elem but just made block in heap %s"</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">);</span>
+                    <span class="p">}</span>
+               <span class="p">}</span>
+               <span class="c1">// 虽然可能分配的block很大，但是分配给用户的elem个数 = 1</span>
+               <span class="n">x</span><span class="o">-&gt;</span><span class="n">totUsed</span><span class="o">++</span><span class="p">;</span>
+               <span class="k">if</span> <span class="p">(</span><span class="n">trace</span><span class="o">&amp;</span><span class="n">T_MHP</span><span class="p">)</span>
+                   <span class="n">printf</span><span class="p">(</span><span class="s">"HMem: %s[M] %u bytes at %p allocated</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">q</span><span class="p">);</span>
+             <span class="k">return</span> <span class="n">q</span><span class="p">;</span>
+         <span class="k">case</span> <span class="n">CHEAP</span><span class="p">:</span>
+             <span class="c1">// 在每次申请内存时多分配一个sizeof(size_t)大小的空间：chdr，用于记录分配内存的大小。</span>
+             <span class="n">chdr</span> <span class="o">=</span> <span class="n">MRound</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="kt">size_t</span><span class="p">));</span>
+             <span class="n">q</span> <span class="o">=</span> <span class="n">malloc</span><span class="p">(</span><span class="n">size</span><span class="o">+</span><span class="n">chdr</span><span class="p">);</span> <span class="c1">//直接使用malloc分配</span>
+             <span class="k">if</span> <span class="p">(</span><span class="n">q</span><span class="o">==</span><span class="nb">NULL</span><span class="p">)</span>
+                 <span class="n">HError</span><span class="p">(</span><span class="mi">5105</span><span class="p">,</span><span class="s">"New: memory exhausted"</span><span class="p">);</span>
+             <span class="n">x</span><span class="o">-&gt;</span><span class="n">totUsed</span> <span class="o">+=</span> <span class="n">size</span><span class="p">;</span>
+             <span class="n">x</span><span class="o">-&gt;</span><span class="n">totAlloc</span> <span class="o">+=</span> <span class="n">size</span><span class="o">+</span><span class="n">chdr</span><span class="p">;</span>
+             <span class="n">ip</span> <span class="o">=</span> <span class="p">(</span><span class="kt">size_t</span> <span class="o">*</span><span class="p">)</span><span class="n">q</span><span class="p">;</span>
+             <span class="o">*</span><span class="n">ip</span> <span class="o">=</span> <span class="n">size</span><span class="p">;</span>
+             <span class="k">if</span> <span class="p">(</span><span class="n">trace</span><span class="o">&amp;</span><span class="n">T_CHP</span><span class="p">)</span>
+                 <span class="n">printf</span><span class="p">(</span><span class="s">"HMem: %s[C] %u+%u bytes at %p allocated</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">,</span> <span class="n">chdr</span><span class="p">,</span><span class="n">size</span><span class="p">,</span> <span class="n">q</span><span class="p">);</span>
+             <span class="k">return</span> <span class="p">(</span><span class="n">Ptr</span><span class="p">)((</span><span class="n">ByteP</span><span class="p">)</span><span class="n">q</span><span class="o">+</span><span class="n">chdr</span><span class="p">);</span>
+          <span class="k">case</span> <span class="n">MSTAK</span><span class="p">:</span>
+             <span class="c1">// 用户可以申请任意大小的内存，但elementSize被限制为1bytes</span>
+             <span class="k">if</span> <span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">protectStk</span><span class="p">)</span>
+                <span class="n">size</span> <span class="o">+=</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">Ptr</span><span class="p">);</span>
+             <span class="n">size</span> <span class="o">=</span> <span class="n">MRound</span><span class="p">(</span><span class="n">size</span><span class="p">);</span> 
+            <span class="c1">//  由于MSTACK的性质，导致每次只能从表头分配内存或者释放内存。不再有查找空余内存的动作(BlockReorder)</span>
+             <span class="k">if</span> <span class="p">((</span><span class="n">q</span> <span class="o">=</span> <span class="n">GetElem</span><span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">type</span><span class="p">))</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span>
+			 <span class="p">{</span>
+                 <span class="c1">// 每次分配bytes大小的新block</span>
+                 <span class="n">bytes</span> <span class="o">=</span> <span class="p">(</span><span class="kt">size_t</span><span class="p">)((</span><span class="kt">double</span><span class="p">)</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">curElem</span> <span class="o">*</span> <span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">growf</span> <span class="o">+</span> <span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">0</span><span class="p">.</span><span class="mi">5</span><span class="p">);</span>
+                 <span class="k">if</span> <span class="p">(</span><span class="n">bytes</span> <span class="o">&gt;</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">maxElem</span><span class="p">)</span>
+                     <span class="n">bytes</span> <span class="o">=</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">maxElem</span><span class="p">;</span>
+                 <span class="n">x</span><span class="o">-&gt;</span><span class="n">curElem</span> <span class="o">=</span> <span class="n">bytes</span><span class="p">;</span>
+                 <span class="c1">// 由于bytes大小有突破x-&gt;maxElem的可能性，所以可以重新分配</span>
+                 <span class="k">if</span> <span class="p">(</span><span class="n">bytes</span> <span class="o">&lt;</span> <span class="n">size</span><span class="p">)</span>
+					 <span class="n">bytes</span> <span class="o">=</span> <span class="n">size</span><span class="p">;</span>
+                 <span class="n">bytes</span> <span class="o">=</span> <span class="n">MRound</span><span class="p">(</span><span class="n">bytes</span><span class="p">);</span>
+                 <span class="n">newp</span> <span class="o">=</span> <span class="n">AllocBlock</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">bytes</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">type</span><span class="p">);</span>
+                 <span class="n">x</span><span class="o">-&gt;</span><span class="n">totAlloc</span> <span class="o">+=</span> <span class="n">bytes</span><span class="p">;</span>
+                 <span class="c1">// 新block位置和MHEAP操作一致</span>
+                 <span class="n">newp</span><span class="o">-&gt;</span><span class="n">next</span> <span class="o">=</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span><span class="p">;</span>
+                 <span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span> <span class="o">=</span> <span class="n">newp</span><span class="p">;</span>
+                 <span class="k">if</span> <span class="p">((</span><span class="n">q</span><span class="o">=</span><span class="n">GetElem</span><span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">type</span><span class="p">))</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span>
+                    <span class="n">HError</span><span class="p">(</span><span class="mi">5191</span><span class="p">,</span><span class="s">"New: null elem but just made block in heap %s"</span><span class="p">,</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">);</span>
+              <span class="p">}</span>
+              <span class="n">x</span><span class="o">-&gt;</span><span class="n">totUsed</span> <span class="o">+=</span> <span class="n">size</span><span class="p">;</span>
+              <span class="k">if</span> <span class="p">(</span><span class="n">trace</span><span class="o">&amp;</span><span class="n">T_STK</span><span class="p">)</span>
+                 <span class="n">printf</span><span class="p">(</span><span class="s">"HMem: %s[S] %u bytes at %p allocated</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">q</span><span class="p">);</span>
+              <span class="k">if</span> <span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">protectStk</span><span class="p">)</span>
+              <span class="p">{</span>
+                  <span class="n">pp</span> <span class="o">=</span> <span class="p">(</span><span class="n">Ptr</span> <span class="o">*</span><span class="p">)((</span><span class="kt">long</span><span class="p">)</span><span class="n">q</span> <span class="o">+</span> <span class="n">size</span> <span class="o">-</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">Ptr</span><span class="p">));</span>
+                  <span class="o">*</span><span class="n">pp</span> <span class="o">=</span> <span class="n">q</span><span class="p">;</span>
+              <span class="p">}</span>
+              <span class="k">return</span> <span class="n">q</span><span class="p">;</span>
+            <span class="p">}</span>
+            <span class="k">return</span> <span class="nb">NULL</span><span class="p">;</span>
+
+<span class="p">}</span>
+
+<span class="k">static</span> <span class="kt">void</span> <span class="o">*</span><span class="nf">GetElem</span><span class="p">(</span><span class="n">BlockP</span> <span class="n">p</span><span class="p">,</span> <span class="kt">size_t</span> <span class="n">elemSize</span><span class="p">,</span> <span class="n">HeapType</span> <span class="n">type</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="kt">int</span> <span class="n">i</span><span class="p">,</span><span class="n">index</span><span class="p">;</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">p</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">NULL</span><span class="p">;</span>
+    <span class="k">switch</span> <span class="p">(</span><span class="n">type</span><span class="p">)</span>
+    <span class="p">{</span>
+	<span class="k">case</span> <span class="n">MHEAP</span><span class="p">:</span>
+        <span class="c1">// MHEAP由于每次只能分配一个element，所以会维护一个table:p-&gt;used，用于查找下一个空闲elem索引。</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">numFree</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+            <span class="k">return</span> <span class="nb">NULL</span><span class="p">;</span>
+        <span class="n">index</span> <span class="o">=</span> <span class="n">p</span><span class="o">-&gt;</span><span class="n">firstFree</span><span class="p">;</span> <span class="c1">//第一个空闲elem index，直接分配给用户</span>
+        <span class="n">p</span><span class="o">-&gt;</span><span class="n">used</span><span class="p">[</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">firstFree</span><span class="o">/</span><span class="mi">8</span><span class="p">]</span> <span class="o">|=</span> <span class="mi">1</span><span class="o">&lt;&lt;</span><span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">firstFree</span><span class="o">&amp;</span><span class="mi">7</span><span class="p">);</span> <span class="c1">//table对应索引位置flag置1</span>
+        <span class="n">p</span><span class="o">-&gt;</span><span class="n">numFree</span><span class="o">--</span><span class="p">;</span>
+        <span class="c1">// 查找下一个空闲元素索引，为下一次分配elem做准备。当没有空闲元素时p-&gt;firstFree指向最后一个elem的下一个index。</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">numFree</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="p">{</span>
+            <span class="k">for</span> <span class="p">(</span><span class="n">i</span><span class="o">=</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">firstFree</span><span class="o">+</span><span class="mi">1</span><span class="p">;</span> <span class="n">i</span><span class="o">&lt;</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">numElem</span><span class="p">;</span><span class="n">i</span><span class="o">++</span><span class="p">)</span>
+            <span class="p">{</span>
+                <span class="k">if</span> <span class="p">((</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">used</span><span class="p">[</span><span class="n">i</span><span class="o">/</span><span class="mi">8</span><span class="p">]</span> <span class="o">&amp;</span> <span class="p">(</span><span class="mi">1</span> <span class="o">&lt;&lt;</span><span class="p">(</span><span class="n">i</span><span class="o">&amp;</span><span class="mi">7</span><span class="p">)))</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+                <span class="p">{</span>
+                     <span class="n">p</span><span class="o">-&gt;</span><span class="n">firstFree</span> <span class="o">=</span> <span class="n">i</span><span class="p">;</span>
+                      <span class="k">break</span><span class="p">;</span>
+                 <span class="p">}</span>
+             <span class="p">}</span>
+         <span class="p">}</span>
+         <span class="k">else</span>
+            <span class="n">p</span><span class="o">-&gt;</span><span class="n">firstFree</span> <span class="o">=</span> <span class="n">p</span><span class="o">-&gt;</span><span class="n">numElem</span><span class="p">;</span>            
+	     <span class="k">return</span> <span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="p">)((</span><span class="n">ByteP</span><span class="p">)</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">data</span><span class="o">+</span><span class="n">index</span><span class="o">*</span><span class="n">elemSize</span><span class="p">);</span> <span class="c1">//返回分配的数据区指针</span>
+     <span class="k">case</span> <span class="n">MSTAK</span><span class="p">:</span>
+         <span class="c1">// 栈顶的block不满足要求直接返回。比较简单，因为</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">numFree</span> <span class="o">&lt;</span> <span class="n">elemSize</span><span class="p">)</span> 
+            <span class="k">return</span> <span class="nb">NULL</span><span class="p">;</span>
+        <span class="n">index</span> <span class="o">=</span> <span class="n">p</span><span class="o">-&gt;</span><span class="n">firstFree</span><span class="p">;</span>
+        <span class="n">p</span><span class="o">-&gt;</span><span class="n">firstFree</span> <span class="o">+=</span> <span class="n">elemSize</span><span class="p">;</span>
+        <span class="n">p</span><span class="o">-&gt;</span><span class="n">numFree</span> <span class="o">=</span> <span class="n">p</span><span class="o">-&gt;</span><span class="n">numFree</span> <span class="o">-</span> <span class="n">elemSize</span><span class="p">;</span>
+        <span class="k">return</span> <span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="p">)((</span><span class="n">ByteP</span><span class="p">)</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">data</span> <span class="o">+</span> <span class="n">index</span><span class="p">);</span> <span class="c1">//返回分配的数据区指针</span>
+     <span class="nl">default:</span>
+        <span class="n">HError</span><span class="p">(</span><span class="mi">5190</span><span class="p">,</span><span class="s">"GetElem: bad type %d"</span><span class="p">,</span> <span class="n">type</span><span class="p">);</span>
+     <span class="p">}</span>
+     <span class="k">return</span> <span class="nb">NULL</span><span class="p">;</span>
+
+<span class="p">}</span>
+
+<span class="kt">void</span> <span class="nf">Dispose</span><span class="p">(</span><span class="n">MemHeap</span> <span class="o">*</span><span class="n">x</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">p</span><span class="p">)</span> <span class="c1">//从内存堆x中释放p</span>
+<span class="p">{</span>
+    <span class="n">BlockP</span> <span class="n">head</span> <span class="p">,</span> <span class="n">cur</span> <span class="p">,</span> <span class="n">prev</span><span class="p">;</span>
+    <span class="n">Boolean</span> <span class="n">found</span> <span class="o">=</span> <span class="n">FALSE</span><span class="p">;</span>
+    <span class="n">ByteP</span> <span class="n">bp</span><span class="p">;</span>
+    <span class="kt">size_t</span> <span class="n">size</span><span class="p">,</span><span class="n">chdr</span><span class="p">;</span>
+    <span class="kt">size_t</span> <span class="n">num</span><span class="p">,</span><span class="n">index</span><span class="p">,</span> <span class="o">*</span><span class="n">ip</span><span class="p">;</span>
+    <span class="n">Ptr</span> <span class="o">*</span><span class="n">pp</span><span class="p">;</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">totUsed</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="n">HError</span><span class="p">(</span><span class="mi">5105</span> <span class="p">,</span> <span class="s">"Dispose: heap %s is empty"</span> <span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">);</span>
+    <span class="k">switch</span><span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">type</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="k">case</span> <span class="n">MHEAP</span><span class="p">:</span>
+            <span class="c1">// 支持链表中任意block的删除操作</span>
+            <span class="n">head</span> <span class="o">=</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span><span class="p">;</span>
+            <span class="n">cur</span><span class="o">=</span><span class="n">head</span><span class="p">;</span>
+            <span class="n">prev</span><span class="o">=</span><span class="nb">NULL</span><span class="p">;</span>
+            <span class="n">size</span> <span class="o">=</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">elemSize</span><span class="p">;</span>
+            <span class="k">while</span> <span class="p">(</span><span class="n">cur</span> <span class="o">!=</span> <span class="nb">NULL</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">found</span><span class="p">)</span>
+            <span class="p">{</span>
+                <span class="n">num</span> <span class="o">=</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">numElem</span><span class="p">;</span>
+                <span class="c1">// 判断指针在该位置</span>
+                <span class="n">found</span> <span class="o">=</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">data</span> <span class="o">&lt;=</span> <span class="n">p</span> <span class="o">&amp;&amp;</span><span class="p">(((</span><span class="kt">void</span><span class="o">*</span><span class="p">)((</span><span class="n">ByteP</span><span class="p">)</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">data</span><span class="o">+</span><span class="p">(</span><span class="n">num</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="n">size</span><span class="p">))</span> <span class="o">&gt;=</span> <span class="n">p</span><span class="p">);</span>
+                <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">found</span><span class="p">)</span>
+                <span class="p">{</span>
+                    <span class="n">prev</span><span class="o">=</span><span class="n">cur</span><span class="p">;</span>
+                    <span class="n">cur</span><span class="o">=</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">next</span><span class="p">;</span>
+                 <span class="p">}</span>
+             <span class="p">}</span>
+             <span class="k">if</span> <span class="p">(</span><span class="n">cur</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span>
+                 <span class="n">HError</span><span class="p">(</span><span class="mi">5175</span><span class="p">,</span><span class="s">"Dispose: Item to free in MHEAP %s not found"</span><span class="p">,</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">);</span>
+            <span class="n">index</span> <span class="o">=</span> <span class="p">((</span><span class="kt">size_t</span><span class="p">)</span><span class="n">p</span><span class="o">-</span><span class="p">(</span><span class="kt">size_t</span><span class="p">)</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">data</span><span class="p">)</span><span class="o">/</span><span class="n">size</span><span class="p">;</span>
+            <span class="n">cur</span><span class="o">-&gt;</span><span class="n">used</span><span class="p">[</span><span class="n">index</span><span class="o">/</span><span class="mi">8</span><span class="p">]</span> <span class="o">&amp;=</span> <span class="o">~</span><span class="p">(</span><span class="mi">1</span> <span class="o">&lt;&lt;</span><span class="p">(</span><span class="n">index</span><span class="o">&amp;</span><span class="mi">7</span><span class="p">));</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">index</span> <span class="o">&lt;</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">firstFree</span><span class="p">)</span>
+                <span class="n">cur</span><span class="o">-&gt;</span><span class="n">firstFree</span> <span class="o">=</span> <span class="n">index</span><span class="p">;</span>
+            <span class="n">cur</span><span class="o">-&gt;</span><span class="n">numFree</span><span class="o">++</span><span class="p">;</span>
+            <span class="n">x</span><span class="o">-&gt;</span><span class="n">totUsed</span><span class="o">--</span><span class="p">;</span>
+            <span class="c1">// 如果该block没有elem被使用，则释放</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">numFree</span> <span class="o">==</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">numElem</span><span class="p">)</span>
+            <span class="p">{</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">cur</span> <span class="o">!=</span> <span class="n">head</span><span class="p">)</span>
+                    <span class="n">prev</span><span class="o">-&gt;</span><span class="n">next</span> <span class="o">=</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">next</span><span class="p">;</span>
+                <span class="k">else</span>
+                    <span class="n">head</span> <span class="o">=</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">next</span><span class="p">;</span>
+                <span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span> <span class="o">=</span> <span class="n">head</span><span class="p">;</span>
+                <span class="n">x</span><span class="o">-&gt;</span><span class="n">totAlloc</span> <span class="o">-=</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">numElem</span><span class="p">;</span>
+                <span class="n">free</span><span class="p">(</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">data</span><span class="p">);</span>
+                <span class="n">free</span><span class="p">(</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">used</span><span class="p">);</span>
+                <span class="n">free</span><span class="p">(</span><span class="n">cur</span><span class="p">);</span>
+            <span class="p">}</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">trace</span><span class="o">&amp;</span><span class="n">T_MHP</span><span class="p">)</span>
+                <span class="n">printf</span><span class="p">(</span><span class="s">"HMem: %s[M] %u bytes at %p de-allocated</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">p</span><span class="p">);</span>
+			<span class="k">return</span><span class="p">;</span>
+            
+        <span class="k">case</span> <span class="n">MSTAK</span><span class="p">:</span>
+            <span class="c1">// 由于MSTACK遵从LIFO，因此要想释放掉p所在的block，需要将之前的block全部释放才能释放处于栈顶的p所在的block</span>
+            <span class="n">cur</span> <span class="o">=</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span><span class="p">;</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">x</span><span class="o">-&gt;</span><span class="n">protectStk</span><span class="p">)</span>
+            <span class="p">{</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">firstFree</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="p">)</span> 
+                    <span class="n">pp</span> <span class="o">=</span> <span class="p">(</span><span class="n">Ptr</span> <span class="o">*</span><span class="p">)((</span><span class="kt">size_t</span><span class="p">)</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">data</span><span class="o">+</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">firstFree</span><span class="o">-</span><span class="k">sizeof</span><span class="p">(</span><span class="n">Ptr</span><span class="p">));</span>
+                <span class="k">else</span>
+                <span class="p">{</span>
+                    <span class="k">if</span> <span class="p">(</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">next</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span>
+                        <span class="n">HError</span><span class="p">(</span><span class="mi">5175</span><span class="p">,</span><span class="s">"Dispose: empty stack"</span><span class="p">);</span>
+                    <span class="n">pp</span> <span class="o">=</span> <span class="p">(</span><span class="n">Ptr</span> <span class="o">*</span><span class="p">)((</span><span class="kt">size_t</span><span class="p">)</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">next</span><span class="o">-&gt;</span><span class="n">data</span><span class="o">+</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">next</span><span class="o">-&gt;</span><span class="n">firstFree</span><span class="o">-</span><span class="k">sizeof</span><span class="p">(</span><span class="n">Ptr</span><span class="p">));</span>
+                <span class="p">}</span>
+                <span class="k">if</span> <span class="p">(</span><span class="o">*</span><span class="n">pp</span> <span class="o">!=</span> <span class="n">p</span><span class="p">)</span>
+                    <span class="n">HError</span><span class="p">(</span><span class="o">-</span><span class="mi">5175</span><span class="p">,</span><span class="s">"Dispose: violation of stack discipline in %s [%p != %p]"</span><span class="p">,</span>
+                           <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">,</span> <span class="o">*</span><span class="n">pp</span><span class="p">,</span> <span class="n">p</span><span class="p">);</span>
+            <span class="p">}</span>
+            <span class="k">while</span> <span class="p">(</span><span class="n">cur</span> <span class="o">!=</span> <span class="nb">NULL</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">found</span><span class="p">)</span>
+            <span class="p">{</span>
+                <span class="n">num</span> <span class="o">=</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">numElem</span><span class="p">;</span>
+                <span class="n">found</span> <span class="o">=</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">data</span> <span class="o">&lt;=</span> <span class="n">p</span> <span class="o">&amp;&amp;</span>
+                    <span class="p">(((</span><span class="kt">void</span><span class="o">*</span><span class="p">)((</span><span class="n">ByteP</span><span class="p">)</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">data</span><span class="o">+</span><span class="n">num</span><span class="p">))</span> <span class="o">&gt;</span> <span class="n">p</span><span class="p">);</span>
+                <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">found</span><span class="p">)</span>
+                <span class="p">{</span>
+                    <span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span> <span class="o">=</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">next</span><span class="p">;</span>
+                    <span class="n">x</span><span class="o">-&gt;</span><span class="n">totAlloc</span> <span class="o">-=</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">numElem</span><span class="p">;</span>
+                    <span class="n">x</span><span class="o">-&gt;</span><span class="n">totUsed</span> <span class="o">-=</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">firstFree</span><span class="p">;</span><span class="c1">//fristFree体现了使用量</span>
+                    <span class="n">free</span><span class="p">(</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">data</span><span class="p">);</span>
+                    <span class="n">free</span><span class="p">(</span><span class="n">cur</span><span class="p">);</span>
+                    <span class="n">cur</span> <span class="o">=</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">heap</span><span class="p">;</span>
+                    <span class="k">if</span> <span class="p">(</span><span class="n">trace</span><span class="o">&amp;</span><span class="n">T_STK</span><span class="p">)</span>
+                        <span class="n">printf</span><span class="p">(</span><span class="s">"HMem: deleleting block in %s[S]</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">);</span>
+                <span class="p">}</span>
+            <span class="p">}</span>
+            <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">found</span><span class="p">)</span>
+                <span class="n">HError</span><span class="p">(</span><span class="mi">5175</span><span class="p">,</span><span class="s">"Dispose: Item to free in MSTAK %s not found"</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">);</span>
+            <span class="c1">// CAUTION:block内同样遵循stack准则，会将p之后不属于p指针指向的内存空间一块释放掉。</span>
+            <span class="n">size</span> <span class="o">=</span> <span class="p">((</span><span class="n">ByteP</span><span class="p">)</span><span class="n">cur</span><span class="o">-&gt;</span><span class="n">data</span> <span class="o">+</span> <span class="n">cur</span><span class="o">-&gt;</span><span class="n">firstFree</span><span class="p">)</span> <span class="o">-</span> <span class="p">(</span><span class="n">ByteP</span><span class="p">)</span><span class="n">p</span><span class="p">;</span> <span class="c1">//分配数据区的实际大小</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">size</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span>
+                <span class="n">HError</span><span class="p">(</span> <span class="mi">5175</span> <span class="p">,</span> <span class="s">"Dispose: item to free in MSTAK %s is above stack top"</span><span class="p">,</span>
+                       <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">);</span>
+            <span class="n">cur</span><span class="o">-&gt;</span><span class="n">firstFree</span> <span class="o">-=</span> <span class="n">size</span><span class="p">;</span>
+            <span class="n">cur</span><span class="o">-&gt;</span><span class="n">numFree</span> <span class="o">+=</span> <span class="n">size</span><span class="p">;</span>
+            <span class="n">x</span><span class="o">-&gt;</span><span class="n">totUsed</span> <span class="o">-=</span> <span class="n">size</span><span class="p">;</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">trace</span><span class="o">&amp;</span><span class="n">T_STK</span><span class="p">)</span>
+                <span class="n">printf</span><span class="p">(</span><span class="s">"HMem: %s[S] %u bytes at %p de-allocated</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">p</span><span class="p">);</span>
+		<span class="k">return</span><span class="p">;</span>
+    <span class="k">case</span> <span class="n">CHEAP</span><span class="p">:</span>
+        <span class="c1">// 只需要注意释放内存时释放储存分配空间大小的chdr空间即可。</span>
+        <span class="n">chdr</span> <span class="o">=</span> <span class="n">MRound</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="kt">size_t</span><span class="p">));</span>
+        <span class="n">bp</span> <span class="o">=</span> <span class="p">(</span><span class="n">ByteP</span><span class="p">)</span><span class="n">p</span><span class="o">-</span><span class="n">chdr</span><span class="p">;</span>
+        <span class="n">ip</span> <span class="o">=</span> <span class="p">(</span><span class="kt">size_t</span> <span class="o">*</span><span class="p">)</span><span class="n">bp</span><span class="p">;</span>
+        <span class="n">x</span><span class="o">-&gt;</span><span class="n">totAlloc</span> <span class="o">-=</span> <span class="p">(</span><span class="o">*</span><span class="n">ip</span> <span class="o">+</span> <span class="n">chdr</span><span class="p">);</span>
+        <span class="n">x</span><span class="o">-&gt;</span><span class="n">totUsed</span> <span class="o">-=</span> <span class="o">*</span><span class="n">ip</span><span class="p">;</span>
+        <span class="n">free</span><span class="p">(</span><span class="n">bp</span><span class="p">);</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">trace</span><span class="o">&amp;</span><span class="n">T_CHP</span><span class="p">)</span>
+            <span class="n">printf</span><span class="p">(</span><span class="s">"HMem: %s[C] %u+%u bytes at %p de-allocated</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span>
+                   <span class="n">x</span><span class="o">-&gt;</span><span class="n">name</span><span class="p">,</span> <span class="n">chdr</span><span class="p">,</span> <span class="o">*</span><span class="n">ip</span><span class="p">,</span> <span class="n">bp</span><span class="p">);</span>
+        <span class="k">return</span><span class="p">;</span>
+   <span class="p">}</span>
+
+<span class="p">}</span>
+</pre></table></code></div></div></div><div class="post-tail-wrapper text-muted"><div class="post-meta mb-3"> <i class="far fa-folder-open fa-fw mr-1"></i> <a href='/categories/linux/'>LINUX</a>, <a href='/categories/memory/'>Memory</a></div><div class="post-tags"> <i class="fa fa-tags fa-fw mr-1"></i> <a href="/tags/writing/" class="post-tag no-text-decoration" >writing</a></div><div class="post-tail-bottom d-flex justify-content-between align-items-center mt-3 pt-5 pb-2"><div class="license-wrapper"> This post is licensed under <a href="https://creativecommons.org/licenses/by/4.0/"> CC BY 4.0 </a> by the author.</div><div class="share-wrapper"> <span class="share-label text-muted mr-1">Share</span> <span class="share-icons"> <a href="https://twitter.com/intent/tweet?text=内存管理三层次之用户态上层案例分析：HTK内存管理 - zhang&url=https://holdurhorses.github.io/posts/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86%E4%B8%89%E5%B1%82%E6%AC%A1%E4%B9%8B%E7%94%A8%E6%88%B7%E6%80%81%E4%B8%8A%E5%B1%82%E6%A1%88%E4%BE%8B%E5%88%86%E6%9E%90-HTK%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" data-toggle="tooltip" data-placement="top" title="Twitter" target="_blank" rel="noopener" aria-label="Twitter"> <i class="fa-fw fab fa-twitter"></i> </a> <a href="https://www.facebook.com/sharer/sharer.php?title=内存管理三层次之用户态上层案例分析：HTK内存管理 - zhang&u=https://holdurhorses.github.io/posts/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86%E4%B8%89%E5%B1%82%E6%AC%A1%E4%B9%8B%E7%94%A8%E6%88%B7%E6%80%81%E4%B8%8A%E5%B1%82%E6%A1%88%E4%BE%8B%E5%88%86%E6%9E%90-HTK%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" data-toggle="tooltip" data-placement="top" title="Facebook" target="_blank" rel="noopener" aria-label="Facebook"> <i class="fa-fw fab fa-facebook-square"></i> </a> <a href="https://telegram.me/share?text=内存管理三层次之用户态上层案例分析：HTK内存管理 - zhang&url=https://holdurhorses.github.io/posts/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86%E4%B8%89%E5%B1%82%E6%AC%A1%E4%B9%8B%E7%94%A8%E6%88%B7%E6%80%81%E4%B8%8A%E5%B1%82%E6%A1%88%E4%BE%8B%E5%88%86%E6%9E%90-HTK%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" data-toggle="tooltip" data-placement="top" title="Telegram" target="_blank" rel="noopener" aria-label="Telegram"> <i class="fa-fw fab fa-telegram"></i> </a> <i id="copy-link" class="fa-fw fas fa-link small" data-toggle="tooltip" data-placement="top" title="Copy link" title-succeed="Link copied successfully!"> </i> </span></div></div></div></div></div><div id="panel-wrapper" class="col-xl-3 pl-2 text-muted topbar-down"><div class="access"><div id="access-lastmod" class="post"> <span>Recent Update</span><ul class="post-content pl-0 pb-1 ml-1 mt-2"><li><a href="/posts/kaldi-vs-wenet-online%E6%B5%81%E7%A8%8B%E8%AE%BE%E8%AE%A1%E5%AF%B9%E7%85%A7/">kaldi vs wenet：online流程设计对照</a><li><a href="/posts/kaldi%E8%A7%A3%E7%A0%81%E5%99%A8%E5%9F%BA%E6%9C%AC%E5%8E%9F%E7%90%86-%E8%AE%BE%E8%AE%A1%E6%80%9D%E6%83%B3%E4%B8%8E%E4%BB%A3%E7%A0%81%E7%AE%80%E6%9E%90/">kaldi解码器基本原理、设计思想与代码简析</a></ul></div><div id="access-tags"> <span>Trending Tags</span><div class="d-flex flex-wrap mt-3 mb-1 mr-3"> <a class="post-tag" href="/tags/writing/">writing</a></div></div></div><script src="https://cdn.jsdelivr.net/gh/afeld/bootstrap-toc@1.0.1/dist/bootstrap-toc.min.js"></script><div id="toc-wrapper" class="pl-0 pr-4 mb-5"> <span class="pl-3 pt-2 mb-2">Contents</span><nav id="toc" data-toggle="toc"></nav></div></div></div><div class="row"><div class="col-12 col-lg-11 col-xl-8"><div id="post-extend-wrapper" class="pl-1 pr-1 pl-sm-2 pr-sm-2 pl-md-4 pr-md-4"><div id="related-posts" class="mt-5 mb-2 mb-sm-4"><h3 class="pt-2 mt-1 mb-4 ml-1" data-toc-skip>Further Reading</h3><div class="card-deck mb-4"><div class="card"> <a href="/posts/kaldi%E8%A7%A3%E7%A0%81%E5%99%A8%E5%9F%BA%E6%9C%AC%E5%8E%9F%E7%90%86-%E8%AE%BE%E8%AE%A1%E6%80%9D%E6%83%B3%E4%B8%8E%E4%BB%A3%E7%A0%81%E7%AE%80%E6%9E%90/"><div class="card-body"> <span class="timeago small" >Nov 8<i class="unloaded">2021-11-08T21:10:00+08:00</i> </span><h3 class="pt-0 mt-1 mb-3" data-toc-skip>kaldi解码器基本原理、设计思想与代码简析</h3><div class="text-muted small"><p> 　　本文以faster-decoder和lattice-decoder两个解码器为实例分别介绍kaldi解码器的基本原理、设计思想和代码简析。首先介绍两种解码器的基本功能与产物，然后介绍基于viterbi朴素实现的解码器的局限性，并给出kaldi中faster-decoder的优化方法和解决方案。最后以lattice-decoder为例给出代码实现简析。 　　两种解码器原理基本一致，lat...</p></div></div></a></div><div class="card"> <a href="/posts/%E5%86%99%E5%9C%A8%E5%89%8D%E9%9D%A2/"><div class="card-body"> <span class="timeago small" >Dec 4<i class="unloaded">2021-12-04T14:10:00+08:00</i> </span><h3 class="pt-0 mt-1 mb-3" data-toc-skip>写在前面</h3><div class="text-muted small"><p> 　　本博客用于总结学习、工作中的一些技术，由于时间有限，公式和图片基本没有，之后可能会补上或有了新的感悟重新写一篇，虽然参照了不少论文和前辈博客，但是主要还是靠自己脱稿白话描述，所以用词严谨性不足，可能存在错误，同时虽然不少博文是总结性质的，但是视野受限，片面描述在所难免，但随着技术能力和写作能力提升，博文的阅读体验感也会更佳，曲折中前进。</p></div></div></a></div><div class="card"> <a href="/posts/pitch%E6%8F%90%E5%8F%96%E6%8A%80%E6%9C%AF%E8%B7%AF%E7%BA%BF%E5%8F%8A%E5%9C%A8ASR-TTS-%E5%8F%98%E5%A3%B0%E7%AE%97%E6%B3%95%E4%B8%AD%E7%9A%84%E5%BA%94%E7%94%A8-TODO/"><div class="card-body"> <span class="timeago small" >Dec 4<i class="unloaded">2021-12-04T21:10:00+08:00</i> </span><h3 class="pt-0 mt-1 mb-3" data-toc-skip>pitch提取技术路线及在ASR、TTS、变声算法中的应用[TODO]</h3><div class="text-muted small"><p> 　　 Parallel text-to-speech with pitch prediction pitch在tts中的应用</p></div></div></a></div></div></div><div class="post-navigation d-flex justify-content-between"> <a href="/posts/kaldi%E8%A7%A3%E7%A0%81%E5%99%A8%E5%9F%BA%E6%9C%AC%E5%8E%9F%E7%90%86-%E8%AE%BE%E8%AE%A1%E6%80%9D%E6%83%B3%E4%B8%8E%E4%BB%A3%E7%A0%81%E7%AE%80%E6%9E%90/" class="btn btn-outline-primary" prompt="Older"><p>kaldi解码器基本原理、设计思想与代码简析</p></a> <a href="/posts/%E5%86%99%E5%9C%A8%E5%89%8D%E9%9D%A2/" class="btn btn-outline-primary" prompt="Newer"><p>写在前面</p></a></div></div></div></div><footer class="d-flex w-100 justify-content-center"><div class="d-flex justify-content-between align-items-center"><div class="footer-left"><p class="mb-0"> © 2021 <a href="https://twitter.com/username">zh</a>. <span data-toggle="tooltip" data-placement="top" title="Except where otherwise noted, the blog posts on this site are licensed under the Creative Commons Attribution 4.0 International (CC BY 4.0) License by the author.">Some rights reserved.</span></p></div><div class="footer-right"><p class="mb-0"> Powered by <a href="https://jekyllrb.com" target="_blank" rel="noopener">Jekyll</a> with <a href="https://github.com/cotes2020/jekyll-theme-chirpy" target="_blank" rel="noopener">Chirpy</a> theme.</p></div></div></footer></div><div id="search-result-wrapper" class="d-flex justify-content-center unloaded"><div class="col-12 col-sm-11 post-content"><div id="search-hints"><h4 class="text-muted mb-4">Trending Tags</h4><a class="post-tag" href="/tags/writing/">writing</a></div><div id="search-results" class="d-flex flex-wrap justify-content-center text-muted mt-3"></div></div></div></div><div id="mask"></div><a id="back-to-top" href="#" aria-label="back-to-top" class="btn btn-lg btn-box-shadow" role="button"> <i class="fas fa-angle-up"></i> </a> <script src="https://cdn.jsdelivr.net/npm/simple-jekyll-search@1.10.0/dest/simple-jekyll-search.min.js"></script> <script> SimpleJekyllSearch({ searchInput: document.getElementById('search-input'), resultsContainer: document.getElementById('search-results'), json: '/assets/js/data/search.json', searchResultTemplate: '<div class="pl-1 pr-1 pl-sm-2 pr-sm-2 pl-lg-4 pr-lg-4 pl-xl-0 pr-xl-0"> <a href="{url}">{title}</a><div class="post-meta d-flex flex-column flex-sm-row text-muted mt-1 mb-1"> {categories} {tags}</div><p>{snippet}</p></div>', noResultsText: '<p class="mt-5">Oops! No result founds.</p>', templateMiddleware: function(prop, value, template) { if (prop === 'categories') { if (value === '') { return `${value}`; } else { return `<div class="mr-sm-4"><i class="far fa-folder fa-fw"></i>${value}</div>`; } } if (prop === 'tags') { if (value === '') { return `${value}`; } else { return `<div><i class="fa fa-tag fa-fw"></i>${value}</div>`; } } } }); </script> <script src="https://cdn.jsdelivr.net/combine/npm/lozad/dist/lozad.min.js,npm/magnific-popup@1/dist/jquery.magnific-popup.min.js,npm/clipboard@2/dist/clipboard.min.js"></script> <script defer src="/assets/js/dist/post.min.js"></script> <script src="https://cdn.jsdelivr.net/combine/npm/popper.js@1.16.1,npm/bootstrap@4/dist/js/bootstrap.min.js"></script> <script defer src="/app.js"></script> <script defer src="https://www.googletagmanager.com/gtag/js?id="></script> <script> document.addEventListener("DOMContentLoaded", function(event) { window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', ''); }); </script>
