@@ -26,8 +26,8 @@ render_with_liquid: false　
 
 | 目的和差别                                                   | kaldi                                                        | wenet                                                        |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| **waveform输入**，kaldi中实现了resampling操作，wenet做了简化 | void AcceptWaveform(BaseFloat sampling_rate,  constVectorBase<BaseFloat> &waveform) = 0; | void FeaturePipeline::AcceptWaveform(const std::vector<float>& wav); |
-| **下层访问接口**，kaldi中提供了随机访问的接口，使用NumFramesReady()信号，而wenet严格按照顺序方式生产和消耗。同时当模型需要的特征得不到满足时，会阻塞在ReadOne() | void GetFrame(int32 frame, VectorBase<BaseFloat> *feat);     | bool ReadOne(std::vector<float>* feat)                       |
+| **waveform输入**，kaldi中实现了<br />resampling操作，wenet做了简化 | void AcceptWaveform(BaseFloat sampling_rate,  constVectorBase<BaseFloat> &waveform) = 0; | void FeaturePipeline::AcceptWaveform(const std::vector<float>& wav); |
+| **下层访问接口**，kaldi中提供了随机访问的接<br />口，使用NumFramesReady()信号，而<br />wenet严格按照顺序方式生产和消耗。同时<br />当模型需要的特征得不到满足时，会阻塞<br />在ReadOne() | void GetFrame(int32 frame, VectorBase<BaseFloat> *feat);     | bool ReadOne(std::vector<float>* feat)                       |
 | **cache**，kaldi中采用了简单的双端队列实现，而wenet考虑到多线程部署问题，采用了更为智能的BlockingQueue，但会阻塞线程。 | std::deque<Vector<BaseFloat>*> items_;                       | BlockingQueue<std::vector<float >> feature_queue_;           |
 | **offset**                                                   | feature_.Size()                                              | num_frames_                                                  |
 | kaldi**中其他有意思的实现**                                  | 惰性计算，如ivector                                          |                                                              |
